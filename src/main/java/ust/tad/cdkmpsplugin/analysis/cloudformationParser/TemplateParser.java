@@ -1,0 +1,128 @@
+package ust.tad.cdkmpsplugin.analysis.cloudformationParser;
+
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.NoSuchFileException;
+import java.nio.file.Path;
+import java.util.Iterator;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
+import java.util.Map;
+import java.util.Set;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import ust.tad.cdkmpsplugin.cdkmodel.CFProperty;
+import ust.tad.cdkmpsplugin.cdkmodel.CFResource;
+
+/**
+ * Parses a CloudFormation template file into a map from logical id to {@link CFResource}.
+ * Properties are flattened to {@link CFProperty} entries whose value is the stringified JSON,
+ * preserving intrinsic functions ({@code Ref}, {@code Fn::GetAtt}, ...) as-is.
+ */
+public class TemplateParser {
+
+  public Map<String, CFResource> parseTemplate(Path templateFile) throws IOException {
+    if (!Files.exists(templateFile)) {
+      throw new NoSuchFileException("Template file not found: " + templateFile);
+    }
+
+    JsonNode root = new ObjectMapper().readTree(templateFile.toFile());
+    JsonNode resources = root.get("Resources");
+    Map<String, CFResource> resourceMap = new LinkedHashMap<>();
+
+    if (resources == null || !resources.isObject()) {
+      return resourceMap;
+    }
+
+    Iterator<Map.Entry<String, JsonNode>> iter = resources.fields();
+    while (iter.hasNext()) {
+      Map.Entry<String, JsonNode> entry = iter.next();
+      String logicalId = entry.getKey();
+      JsonNode resourceNode = entry.getValue();
+
+      String type = resourceNode.has("Type") ? resourceNode.get("Type").asText() : "";
+      Set<CFProperty> properties = extractProperties(resourceNode.get("Properties"));
+      properties.addAll(extractExplicitDependencies(resourceNode.get("DependsOn")));
+
+      resourceMap.put(logicalId, new CFResource(logicalId, type, properties));
+    }
+    return resourceMap;
+  }
+
+  private Set<CFProperty> extractProperties(JsonNode propertiesNode) {
+    Set<CFProperty> result = new LinkedHashSet<>();
+    if (propertiesNode == null || !propertiesNode.isObject()) {
+      return result;
+    }
+    Iterator<Map.Entry<String, JsonNode>> iter = propertiesNode.fields();
+    while (iter.hasNext()) {
+      Map.Entry<String, JsonNode> entry = iter.next();
+      JsonNode value = entry.getValue();
+      result.add(
+          new CFProperty(
+              entry.getKey(), stringifyValue(value), extractReferenceTarget(value)));
+    }
+    return result;
+  }
+
+  /**
+   * Maps the resource-level {@code DependsOn} attribute (string or array form) to reference
+   * properties with key {@code "DependsOn"}.
+   */
+  private Set<CFProperty> extractExplicitDependencies(JsonNode dependsOnNode) {
+    Set<CFProperty> result = new LinkedHashSet<>();
+    if (dependsOnNode == null) {
+      return result;
+    }
+    if (dependsOnNode.isTextual()) {
+      result.add(new CFProperty("DependsOn", dependsOnNode.asText(), dependsOnNode.asText()));
+    } else if (dependsOnNode.isArray()) {
+      for (JsonNode dep : dependsOnNode) {
+        if (dep.isTextual()) {
+          result.add(new CFProperty("DependsOn", dep.asText(), dep.asText()));
+        }
+      }
+    }
+    return result;
+  }
+
+  /**
+   * Returns the logical id referenced by a {@code Ref} or {@code Fn::GetAtt} intrinsic, or {@code
+   * null} for plain values. Resolution against the model happens later, at MPS serialisation.
+   */
+  private String extractReferenceTarget(JsonNode node) {
+    if (node == null || !node.isObject() || node.size() != 1) {
+      return null;
+    }
+    JsonNode ref = node.get("Ref");
+    if (ref != null && ref.isTextual()) {
+      return ref.asText();
+    }
+    JsonNode getAtt = node.get("Fn::GetAtt");
+    if (getAtt != null) {
+      if (getAtt.isArray() && getAtt.size() >= 1 && getAtt.get(0).isTextual()) {
+        return getAtt.get(0).asText();
+      }
+      if (getAtt.isTextual() && !getAtt.asText().isBlank()) {
+        return getAtt.asText().split("\\.", 2)[0];
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Textual scalars are unwrapped (no surrounding quotes); objects and arrays are kept as raw JSON
+   * so nested intrinsic functions are preserved.
+   */
+  private String stringifyValue(JsonNode node) {
+    if (node == null || node.isNull()) {
+      return "null";
+    }
+    if (node.isTextual()) {
+      return node.asText().trim();
+    }
+    return node.toString().trim();
+  }
+}

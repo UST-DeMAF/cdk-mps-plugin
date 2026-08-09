@@ -1,0 +1,3 @@
+[submodule "mps-transformation-awscdk"]
+	path = mps-transformation-awscdk
+	url = https://github.com/UST-DeMAF/mps-transformation-awscdk.git

@@ -1,0 +1,11 @@
+{
+  "version": "53.0.0",
+  "artifacts": {
+    "GhostStack": {
+      "type": "aws:cloudformation:stack",
+      "properties": {
+        "templateFile": "GhostStack.template.json"
+      }
+    }
+  }
+}

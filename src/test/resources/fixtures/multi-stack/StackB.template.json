@@ -1,0 +1,13 @@
+{
+  "Resources": {
+    "QueueB222": {
+      "Type": "AWS::SQS::Queue",
+      "Properties": {
+        "QueueName": "stack-b-queue"
+      },
+      "Metadata": {
+        "aws:cdk:path": "StackB/QueueB/Resource"
+      }
+    }
+  }
+}

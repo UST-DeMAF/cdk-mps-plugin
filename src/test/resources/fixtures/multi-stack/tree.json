@@ -1,0 +1,85 @@
+{
+  "version": "tree-0.1",
+  "tree": {
+    "id": "App",
+    "path": "",
+    "constructInfo": {
+      "fqn": "aws-cdk-lib.App",
+      "version": "2.253.1"
+    },
+    "children": {
+      "StackA": {
+        "id": "StackA",
+        "path": "StackA",
+        "constructInfo": {
+          "fqn": "aws-cdk-lib.Stack",
+          "version": "2.253.1"
+        },
+        "children": {
+          "BucketA": {
+            "id": "BucketA",
+            "path": "StackA/BucketA",
+            "constructInfo": {
+              "fqn": "aws-cdk-lib.aws_s3.Bucket",
+              "version": "2.253.1"
+            },
+            "children": {
+              "Resource": {
+                "id": "Resource",
+                "path": "StackA/BucketA/Resource",
+                "constructInfo": {
+                  "fqn": "aws-cdk-lib.aws_s3.CfnBucket",
+                  "version": "2.253.1"
+                },
+                "attributes": {
+                  "aws:cdk:cloudformation:type": "AWS::S3::Bucket",
+                  "aws:cdk:cloudformation:logicalId": "BucketA111"
+                }
+              }
+            }
+          }
+        }
+      },
+      "StackB": {
+        "id": "StackB",
+        "path": "StackB",
+        "constructInfo": {
+          "fqn": "aws-cdk-lib.Stack",
+          "version": "2.253.1"
+        },
+        "children": {
+          "QueueB": {
+            "id": "QueueB",
+            "path": "StackB/QueueB",
+            "constructInfo": {
+              "fqn": "aws-cdk-lib.aws_sqs.Queue",
+              "version": "2.253.1"
+            },
+            "children": {
+              "Resource": {
+                "id": "Resource",
+                "path": "StackB/QueueB/Resource",
+                "constructInfo": {
+                  "fqn": "aws-cdk-lib.aws_sqs.CfnQueue",
+                  "version": "2.253.1"
+                },
+                "attributes": {
+                  "aws:cdk:cloudformation:type": "AWS::SQS::Queue",
+                  "aws:cdk:cloudformation:logicalId": "QueueB222"
+                }
+              }
+            }
+          }
+        }
+      },
+      "Tree": {
+        "id": "Tree",
+        "path": "Tree",
+        "constructInfo": {
+          "fqn": "constructs.Construct",
+          "version": "10.6.0"
+        }
+      }
+    }
+  }
+}
