@@ -14,12 +14,12 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: 'true'
 
       # Matches the JRE the image runs on (eclipse-temurin:11-jre)
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v5
         with:
           java-version: '11'
           distribution: 'temurin'
