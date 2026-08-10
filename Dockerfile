@@ -34,4 +34,4 @@ ENV JAVA_HOME=/app/mps-transformation-awscdk/build/mps-bundle/mps/jbr
 
 EXPOSE 8088
 
-CMD ["java", "-jar", "/app/target/cdk-mps-plugin-0.1.0-SNAPSHOT.jar"]
+CMD ["java", "-jar", "/app/target/cdk-mps-plugin.jar"]

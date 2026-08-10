@@ -4,10 +4,11 @@ name: workflow-build
 on:
   push:
     branches:
-      - '*'
-
-env:
-  IMAGE_NAME: cdk-mps-plugin
+      - '**'
+  pull_request:
+    branches:
+      - 'main'
+      - 'dev'
 
 jobs:
   build:
@@ -17,11 +18,13 @@ jobs:
         with:
           submodules: 'true'
 
-      # validates, compile, test and packages it
-      - name: Build Project
-        run: sh ./mvnw package -DskipTests
+      # Matches the JRE the image runs on (eclipse-temurin:11-jre)
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '11'
+          distribution: 'temurin'
+          cache: maven
 
-      - name: Run
-        # does not work without the full stack - SKIP
-        # run: sh ./mvnw spring-boot:run -DskipTests
-        run: sh -c "echo 'nothing to run'"
+      # validates, compiles, tests and packages it
+      - name: Build Project
+        run: ./mvnw --batch-mode package

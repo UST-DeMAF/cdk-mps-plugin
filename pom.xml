@@ -104,6 +104,8 @@
     </dependencies>
 
     <build>
+        <!-- Version-independent jar name, so the Dockerfile CMD survives version bumps -->
+        <finalName>cdk-mps-plugin</finalName>
         <plugins>
             <plugin>
                 <groupId>org.springframework.boot</groupId>
