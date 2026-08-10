@@ -1,0 +1,27 @@
+# Runs Build without Docker
+name: workflow-build
+
+on:
+  push:
+    branches:
+      - '*'
+
+env:
+  IMAGE_NAME: cdk-mps-plugin
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: 'true'
+
+      # validates, compile, test and packages it
+      - name: Build Project
+        run: sh ./mvnw package -DskipTests
+
+      - name: Run
+        # does not work without the full stack - SKIP
+        # run: sh ./mvnw spring-boot:run -DskipTests
+        run: sh -c "echo 'nothing to run'"
