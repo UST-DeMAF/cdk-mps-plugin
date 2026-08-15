@@ -48,7 +48,68 @@ public class TemplateParser {
 
       resourceMap.put(logicalId, new CFResource(logicalId, type, properties));
     }
+    resolveListReferences(resourceMap);
     return resourceMap;
+  }
+
+  /**
+   * A property whose value is a list of references (Subnets, SecurityGroups, Roles, ...) would
+   * otherwise show up as raw JSON. Turn those into a readable comma-separated list of the
+   * referenced resources. A lone reference is left alone so it can still become a relation.
+   */
+  private void resolveListReferences(Map<String, CFResource> resourceMap) {
+    Map<String, String> descriptiveById = new LinkedHashMap<>();
+    for (CFResource resource : resourceMap.values()) {
+      descriptiveById.put(resource.getLogicalId(), descriptiveValue(resource));
+    }
+    ObjectMapper mapper = new ObjectMapper();
+    for (CFResource resource : resourceMap.values()) {
+      Set<CFProperty> resolved = new LinkedHashSet<>();
+      for (CFProperty property : resource.getProperties()) {
+        String joined =
+            property.isReference() ? null : joinListReferences(property.getValue(), descriptiveById, mapper);
+        resolved.add(joined == null ? property : new CFProperty(property.getKey(), joined, null));
+      }
+      resource.setProperties(resolved);
+    }
+  }
+
+  private String descriptiveValue(CFResource resource) {
+    for (CFProperty property : resource.getProperties()) {
+      if ("CidrBlock".equals(property.getKey()) && !property.isReference()) {
+        return property.getValue();
+      }
+    }
+    return resource.getLogicalId();
+  }
+
+  /** Joins a JSON array of references into a comma-separated list, or returns null to keep the value as-is. */
+  private String joinListReferences(
+      String value, Map<String, String> descriptiveById, ObjectMapper mapper) {
+    if (value == null || !value.startsWith("[")) {
+      return null;
+    }
+    JsonNode array;
+    try {
+      array = mapper.readTree(value);
+    } catch (IOException e) {
+      return null;
+    }
+    if (!array.isArray() || array.isEmpty()) {
+      return null;
+    }
+    StringBuilder joined = new StringBuilder();
+    for (JsonNode element : array) {
+      String target = extractReferenceTarget(element);
+      if (target == null) {
+        return null; // leave anything that isn't a clean list of references untouched
+      }
+      if (joined.length() > 0) {
+        joined.append(",");
+      }
+      joined.append(descriptiveById.getOrDefault(target, target));
+    }
+    return joined.toString();
   }
 
   private Set<CFProperty> extractProperties(JsonNode propertiesNode) {

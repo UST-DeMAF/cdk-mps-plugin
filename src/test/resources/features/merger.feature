@@ -15,6 +15,12 @@ Feature: CDK Deployment Model Merger
     And the construct "WebService" should have a CF resource of type "AWS::ECS::Service"
     And the CF resource "AWS::ECS::TaskDefinition" of "WebService" should have property "Cpu" with value "256"
 
+  Scenario: List-of-reference properties are resolved to comma-joined descriptive values
+    Given a CDK output directory at fixture "single-stack"
+    When I run the CDK merger on that directory
+    Then the CF resource "AWS::ElasticLoadBalancingV2::LoadBalancer" of "WebService" should have property "Subnets" with value "10.0.0.0/18,10.0.64.0/18"
+    And the CF resource "AWS::ElasticLoadBalancingV2::LoadBalancer" of "WebService" should have property "SecurityGroups" with value "WebServiceLBSecurityGroup66424F28"
+
   Scenario: Infrastructure plumbing constructs are excluded from the output
     Given a CDK output directory at fixture "single-stack"
     When I run the CDK merger on that directory
