@@ -130,6 +130,9 @@ public class CdkModelXmlSerializer {
         sb.append("        <node concept=\"2uvc4s\" id=\"p").append(++nextId)
             .append("\" role=\"2uomXq\">\n");
         appendProperty(sb, "          ", "2uok1v", property.getKey());
+        if ("ConnectsTo".equals(property.getKey())) {
+          appendProperty(sb, "          ", "2uolX_", property.getValue());
+        }
         sb.append("          <ref role=\"3B8hCG\" node=\"").append(targetNodeId).append("\" />\n");
         sb.append("        </node>\n");
       } else {

@@ -50,6 +50,7 @@ public class BaseCDKParser {
       Set<CDKConstruct> constructs = treeWalker.walkTree(treeRoot, stackName, templateMap);
       model.addAllConstructs(constructs);
     }
+    new IamConnectivityResolver().resolve(model);
     return model;
   }
 }
