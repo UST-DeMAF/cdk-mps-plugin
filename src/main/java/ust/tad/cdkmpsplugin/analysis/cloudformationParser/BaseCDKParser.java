@@ -51,6 +51,7 @@ public class BaseCDKParser {
       model.addAllConstructs(constructs);
     }
     new IamConnectivityResolver().resolve(model);
+    new ConnectivityGraphResolver().resolve(model);
     return model;
   }
 }

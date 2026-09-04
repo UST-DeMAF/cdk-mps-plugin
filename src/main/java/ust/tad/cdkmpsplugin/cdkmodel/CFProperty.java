@@ -1,7 +1,9 @@
 package ust.tad.cdkmpsplugin.cdkmodel;
 
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
+import java.util.LinkedHashSet;
 import java.util.Objects;
+import java.util.Set;
 
 /**
  * A single key/value entry on a CloudFormation resource. The {@code value} is the stringified JSON
@@ -24,6 +26,14 @@ public class CFProperty {
    */
   @JacksonXmlProperty(localName = "referenceTarget")
   private String referenceTarget;
+
+  /**
+   * Every logical id referenced anywhere inside this property, including references nested in
+   * arrays and intrinsic function arguments. Used to build the resource reference graph; not
+   * serialised into the MPS model, so it never becomes a relation on its own.
+   */
+  @JacksonXmlProperty(localName = "nestedTargets")
+  private Set<String> nestedTargets = new LinkedHashSet<>();
 
   public CFProperty() {}
 
@@ -70,6 +80,14 @@ public class CFProperty {
 
   public void setReferenceTarget(String referenceTarget) {
     this.referenceTarget = referenceTarget;
+  }
+
+  public Set<String> getNestedTargets() {
+    return nestedTargets;
+  }
+
+  public void setNestedTargets(Set<String> nestedTargets) {
+    this.nestedTargets = nestedTargets == null ? new LinkedHashSet<>() : nestedTargets;
   }
 
   public boolean isReference() {
