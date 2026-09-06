@@ -68,7 +68,13 @@ public class TemplateParser {
       for (CFProperty property : resource.getProperties()) {
         String joined =
             property.isReference() ? null : joinListReferences(property.getValue(), descriptiveById, mapper);
-        resolved.add(joined == null ? property : new CFProperty(property.getKey(), joined, null));
+        if (joined == null) {
+          resolved.add(property);
+        } else {
+          CFProperty collapsed = new CFProperty(property.getKey(), joined, null);
+          collapsed.setNestedTargets(property.getNestedTargets());
+          resolved.add(collapsed);
+        }
       }
       resource.setProperties(resolved);
     }
@@ -121,9 +127,10 @@ public class TemplateParser {
     while (iter.hasNext()) {
       Map.Entry<String, JsonNode> entry = iter.next();
       JsonNode value = entry.getValue();
-      result.add(
-          new CFProperty(
-              entry.getKey(), stringifyValue(value), extractReferenceTarget(value)));
+      CFProperty property =
+          new CFProperty(entry.getKey(), stringifyValue(value), extractReferenceTarget(value));
+      property.setNestedTargets(ReferenceExtractor.deepTargets(value));
+      result.add(property);
     }
     return result;
   }
@@ -154,23 +161,7 @@ public class TemplateParser {
    * null} for plain values. Resolution against the model happens later, at MPS serialisation.
    */
   private String extractReferenceTarget(JsonNode node) {
-    if (node == null || !node.isObject() || node.size() != 1) {
-      return null;
-    }
-    JsonNode ref = node.get("Ref");
-    if (ref != null && ref.isTextual()) {
-      return ref.asText();
-    }
-    JsonNode getAtt = node.get("Fn::GetAtt");
-    if (getAtt != null) {
-      if (getAtt.isArray() && getAtt.size() >= 1 && getAtt.get(0).isTextual()) {
-        return getAtt.get(0).asText();
-      }
-      if (getAtt.isTextual() && !getAtt.asText().isBlank()) {
-        return getAtt.asText().split("\\.", 2)[0];
-      }
-    }
-    return null;
+    return ReferenceExtractor.directTarget(node);
   }
 
   /**
