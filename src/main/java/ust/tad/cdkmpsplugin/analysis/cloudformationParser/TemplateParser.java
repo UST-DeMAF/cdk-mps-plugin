@@ -131,6 +131,9 @@ public class TemplateParser {
           new CFProperty(entry.getKey(), stringifyValue(value), extractReferenceTarget(value));
       property.setNestedTargets(ReferenceExtractor.deepTargets(value));
       result.add(property);
+      // The raw value is kept because it carries the references; the dotted leaves make it readable.
+      PropertyFlattener.flatten(entry.getKey(), value)
+          .forEach((k, v) -> result.add(new CFProperty(k, v)));
     }
     return result;
   }

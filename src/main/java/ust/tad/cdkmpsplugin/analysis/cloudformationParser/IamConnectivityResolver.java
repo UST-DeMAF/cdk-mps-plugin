@@ -23,6 +23,11 @@ public class IamConnectivityResolver {
 
   static final String CONNECTS_TO_KEY = "ConnectsTo";
 
+  /** Services granted on a wildcard resource that carry no architectural meaning. */
+  private static final Set<String> BOILERPLATE_SERVICES = Set.of("logs", "xray", "sts");
+
+  private static final String MANAGED_SERVICE_SUFFIX = "::ManagedService";
+
   private static final String READ = "read";
   private static final String WRITE = "write";
   private static final String READ_WRITE = "readwrite";
@@ -41,6 +46,7 @@ public class IamConnectivityResolver {
     }
 
     Map<String, Map<String, Access>> accessByRole = collectRoleGrants(resources, byId);
+    Map<String, CFResource> managedServices = new LinkedHashMap<>();
 
     for (CFResource accessor : resources) {
       Map<String, Access> targets = new LinkedHashMap<>();
@@ -58,12 +64,43 @@ public class IamConnectivityResolver {
 
       for (Map.Entry<String, Access> entry : targets.entrySet()) {
         String target = entry.getKey();
-        if (target.equals(accessor.getLogicalId()) || !byId.containsKey(target)) {
+        if (target.endsWith(MANAGED_SERVICE_SUFFIX)) {
+          target = managedService(target, managedServices).getLogicalId();
+        } else if (target.equals(accessor.getLogicalId()) || !byId.containsKey(target)) {
           continue;
         }
         accessor.addProperty(new CFProperty(CONNECTS_TO_KEY, entry.getValue().level(), target));
       }
     }
+
+    if (!managedServices.isEmpty()) {
+      model.addConstruct(
+          new CDKConstruct(
+              "ManagedServices",
+              "",
+              model.getStacks().stream().findFirst().orElse(""),
+              "ManagedServices",
+              new LinkedHashSet<>(managedServices.values())));
+    }
+  }
+
+  /**
+   * A service reached through a wildcard grant has no CloudFormation resource of its own, so one is
+   * synthesised to stand for it. The type carries the service name so the mapping rules can give it
+   * a component type in the usual way.
+   */
+  private CFResource managedService(String target, Map<String, CFResource> managedServices) {
+    String service = target.substring(0, target.length() - MANAGED_SERVICE_SUFFIX.length());
+    return managedServices.computeIfAbsent(
+        service,
+        s ->
+            new CFResource(
+                s,
+                "AWS::"
+                    + Character.toUpperCase(s.charAt(0))
+                    + s.substring(1)
+                    + MANAGED_SERVICE_SUFFIX,
+                new LinkedHashSet<>()));
   }
 
   private Map<String, Map<String, Access>> collectRoleGrants(
@@ -106,6 +143,12 @@ public class IamConnectivityResolver {
         continue;
       }
       Access access = accessOf(statement.get("Action"));
+      if (isWildcard(statement.get("Resource"))) {
+        for (String service : servicesOf(statement.get("Action"))) {
+          grants.computeIfAbsent(service + MANAGED_SERVICE_SUFFIX, t -> new Access()).merge(access);
+        }
+        continue;
+      }
       for (String target : statementTargets(statement.get("Resource"), byId)) {
         grants.computeIfAbsent(target, t -> new Access()).merge(access);
       }
@@ -124,6 +167,37 @@ public class IamConnectivityResolver {
       }
     }
     return targets;
+  }
+
+  private static boolean isWildcard(JsonNode resource) {
+    if (resource == null) {
+      return false;
+    }
+    for (JsonNode element : resource.isArray() ? resource : List.of(resource)) {
+      if (element.isTextual() && "*".equals(element.asText())) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Service prefixes named by a statement's actions, such as {@code rekognition}. */
+  private Set<String> servicesOf(JsonNode action) {
+    Set<String> services = new LinkedHashSet<>();
+    if (action == null) {
+      return services;
+    }
+    for (JsonNode entry : action.isArray() ? action : List.of(action)) {
+      String text = entry.asText();
+      int colon = text.indexOf(':');
+      if (colon > 0) {
+        String service = text.substring(0, colon).toLowerCase();
+        if (!BOILERPLATE_SERVICES.contains(service)) {
+          services.add(service);
+        }
+      }
+    }
+    return services;
   }
 
   private Access accessOf(JsonNode action) {
