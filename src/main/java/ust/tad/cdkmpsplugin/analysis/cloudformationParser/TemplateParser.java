@@ -118,6 +118,36 @@ public class TemplateParser {
     return joined.toString();
   }
 
+  /**
+   * Reads the {@code Outputs} section and returns each export name with the value it publishes.
+   * A stack that shares a resource with another stack exports it here, and the consuming stack
+   * refers to the same name through {@code Fn::ImportValue}.
+   */
+  public Map<String, JsonNode> parseExports(Path templateFile) throws IOException {
+    Map<String, JsonNode> exports = new LinkedHashMap<>();
+    if (!Files.exists(templateFile)) {
+      return exports;
+    }
+    JsonNode outputs = new ObjectMapper().readTree(templateFile.toFile()).get("Outputs");
+    if (outputs == null || !outputs.isObject()) {
+      return exports;
+    }
+    outputs
+        .fields()
+        .forEachRemaining(
+            entry -> {
+              JsonNode export = entry.getValue().get("Export");
+              JsonNode value = entry.getValue().get("Value");
+              if (export != null && value != null) {
+                JsonNode name = export.get("Name");
+                if (name != null && name.isTextual()) {
+                  exports.put(name.asText(), value);
+                }
+              }
+            });
+    return exports;
+  }
+
   private Set<CFProperty> extractProperties(JsonNode propertiesNode) {
     Set<CFProperty> result = new LinkedHashSet<>();
     if (propertiesNode == null || !propertiesNode.isObject()) {

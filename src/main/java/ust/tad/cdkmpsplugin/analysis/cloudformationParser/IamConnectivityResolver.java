@@ -254,8 +254,29 @@ public class IamConnectivityResolver {
         roles.addAll(referencedIds(profile, "Roles", byId));
       }
     }
+    roles.addAll(nestedRoles(accessor, byId));
     roles.removeIf(id -> byId.get(id) == null || !isIam(byId.get(id)));
     return new ArrayList<>(roles);
+  }
+
+  /**
+   * Roles named somewhere inside a property rather than at the top of one. An IoT topic rule keeps
+   * the role it assumes inside its action list, so the plain lookups above never reach it.
+   */
+  private Set<String> nestedRoles(CFResource accessor, Map<String, CFResource> byId) {
+    Set<String> roles = new LinkedHashSet<>();
+    if (isIam(accessor)) {
+      return roles;
+    }
+    for (CFProperty property : accessor.getProperties()) {
+      for (String target : property.getNestedTargets()) {
+        CFResource candidate = byId.get(target);
+        if (candidate != null && "AWS::IAM::Role".equals(candidate.getType())) {
+          roles.add(target);
+        }
+      }
+    }
+    return roles;
   }
 
   private void collectReferences(JsonNode node, Map<String, CFResource> byId, List<String> targets) {

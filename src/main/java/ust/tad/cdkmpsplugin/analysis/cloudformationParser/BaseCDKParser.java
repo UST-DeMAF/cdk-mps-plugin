@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
 
@@ -36,6 +37,7 @@ public class BaseCDKParser {
     Map<String, String> stacks = new ManifestParser().parseManifest(manifestPath);
     JsonNode treeRoot = new ObjectMapper().readTree(treePath.toFile()).get("tree");
 
+    Map<String, JsonNode> exports = new LinkedHashMap<>();
     TemplateParser templateParser = new TemplateParser();
     TreeWalker treeWalker = new TreeWalker();
 
@@ -47,9 +49,13 @@ public class BaseCDKParser {
       Map<String, CFResource> templateMap =
           templateParser.parseTemplate(cdkOutDir.resolve(templateFile));
 
+      exports.putAll(templateParser.parseExports(cdkOutDir.resolve(templateFile)));
+
       Set<CDKConstruct> constructs = treeWalker.walkTree(treeRoot, stackName, templateMap);
       model.addAllConstructs(constructs);
     }
+    // Every stack is in the model now, so an import can be matched to the export it names.
+    new CrossStackResolver().resolve(model, exports);
     new ArtifactResolver().resolve(model);
     new IamConnectivityResolver().resolve(model);
     new ConnectivityGraphResolver().resolve(model);

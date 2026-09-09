@@ -94,6 +94,37 @@ class ConnectivityGraphResolverTest {
     assertNull(connectsTo(a, "B"), "unlisted types are not routed through");
   }
 
+  @Test
+  void followsADestinationFieldWhenNoRoleIsAssumed() {
+    // An IoT rule writing to Kafka names the cluster in a destination field and assumes no role.
+    CFResource cluster = res("Cluster", "AWS::MSK::Cluster");
+    CFResource rule = res("Rule", "AWS::IoT::TopicRule");
+    CFProperty payload =
+        new CFProperty(
+            "TopicRulePayload",
+            "{\"Actions\":[{\"Kafka\":{\"DestinationArn\":{\"Fn::GetAtt\":[\"Cluster\",\"Arn\"]},"
+                + "\"Topic\":\"telemetry\"}}]}",
+            null);
+    rule.addProperty(payload);
+
+    resolve(model(cluster, rule));
+    assertEquals("invoke", connectsTo(rule, "Cluster"));
+  }
+
+  @Test
+  void ignoresReferencesThatAreNotDestinations() {
+    CFResource cluster = res("Cluster", "AWS::MSK::Cluster");
+    CFResource rule = res("Rule", "AWS::IoT::TopicRule");
+    rule.addProperty(
+        new CFProperty(
+            "TopicRulePayload",
+            "{\"Actions\":[{\"Kafka\":{\"SomeOtherField\":{\"Ref\":\"Cluster\"}}}]}",
+            null));
+
+    resolve(model(cluster, rule));
+    assertNull(connectsTo(rule, "Cluster"), "only destination fields are followed");
+  }
+
   private static void resolve(CDKDeploymentModel m) {
     new ConnectivityGraphResolver().resolve(m);
   }
