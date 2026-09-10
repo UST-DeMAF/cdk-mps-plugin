@@ -26,6 +26,10 @@ public class IamConnectivityResolver {
   /** Services granted on a wildcard resource that carry no architectural meaning. */
   private static final Set<String> BOILERPLATE_SERVICES = Set.of("logs", "xray", "sts");
 
+  /** Observability resources. A grant on one says nothing about the deployment topology. */
+  private static final Set<String> OBSERVABILITY_TYPES =
+      Set.of("AWS::Logs::LogGroup", "AWS::Logs::LogStream");
+
   private static final String MANAGED_SERVICE_SUFFIX = "::ManagedService";
 
   private static final String READ = "read";
@@ -66,7 +70,9 @@ public class IamConnectivityResolver {
         String target = entry.getKey();
         if (target.endsWith(MANAGED_SERVICE_SUFFIX)) {
           target = managedService(target, managedServices).getLogicalId();
-        } else if (target.equals(accessor.getLogicalId()) || !byId.containsKey(target)) {
+        } else if (target.equals(accessor.getLogicalId())
+            || !byId.containsKey(target)
+            || OBSERVABILITY_TYPES.contains(byId.get(target).getType())) {
           continue;
         }
         accessor.addProperty(new CFProperty(CONNECTS_TO_KEY, entry.getValue().level(), target));
@@ -210,6 +216,8 @@ public class IamConnectivityResolver {
       if (verb.isEmpty() || verb.equals("*")) {
         access.hasRead = true;
         access.hasWrite = true;
+      } else if (isMetadataVerb(verb)) {
+        continue;
       } else if (isWriteVerb(verb)) {
         access.hasWrite = true;
       } else {
@@ -287,9 +295,10 @@ public class IamConnectivityResolver {
   }
 
   private void addReference(JsonNode node, Map<String, CFResource> byId, List<String> targets) {
-    String target = referenceTarget(node);
-    if (target != null && byId.containsKey(target) && !isIam(byId.get(target))) {
-      targets.add(target);
+    for (String target : ReferenceExtractor.deepTargets(node)) {
+      if (byId.containsKey(target) && !isIam(byId.get(target))) {
+        targets.add(target);
+      }
     }
   }
 
@@ -372,6 +381,20 @@ public class IamConnectivityResolver {
     }
     String verb = action.contains(":") ? action.substring(action.indexOf(':') + 1) : action;
     return verb.trim().toLowerCase();
+  }
+
+  /**
+   * Calls that read configuration rather than data. CDK attaches them to write-only grants, so
+   * counting them as reads would report a producer as reading what it only writes to.
+   */
+  private static boolean isMetadataVerb(String verb) {
+    for (String prefix : new String[] {"describe", "getqueueattributes", "getqueueurl",
+        "getbucketlocation", "getbucketacl", "gettopicattributes"}) {
+      if (verb.startsWith(prefix)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private static boolean isWriteVerb(String verb) {

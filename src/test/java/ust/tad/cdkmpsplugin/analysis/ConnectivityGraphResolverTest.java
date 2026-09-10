@@ -125,6 +125,53 @@ class ConnectivityGraphResolverTest {
     assertNull(connectsTo(rule, "Cluster"), "only destination fields are followed");
   }
 
+  @Test
+  void distributionReachesItsOriginBucket() {
+    // Origin access control grants CloudFront through a bucket policy, so no role is assumed and
+    // the bucket is named only by the origin domain.
+    CFResource bucket = res("Bucket", "AWS::S3::Bucket");
+    CFResource distribution = res("Dist", "AWS::CloudFront::Distribution");
+    distribution.addProperty(
+        new CFProperty(
+            "DistributionConfig",
+            "{\"Origins\":[{\"DomainName\":{\"Fn::GetAtt\":[\"Bucket\",\"RegionalDomainName\"]},"
+                + "\"Id\":\"origin1\"}]}",
+            null));
+
+    resolve(model(bucket, distribution));
+    assertEquals("invoke", connectsTo(distribution, "Bucket"));
+  }
+
+  @Test
+  void apiReachesTheUserPoolThroughItsAuthorizer() {
+    CFResource api = res("Api", "AWS::ApiGatewayV2::Api");
+    CFResource pool = res("Pool", "AWS::Cognito::UserPool");
+    CFResource authorizer = res("Auth", "AWS::ApiGatewayV2::Authorizer");
+    authorizer.addProperty(prop("ApiId", "Api"));
+    authorizer.addProperty(prop("JwtConfiguration", "Pool"));
+
+    resolve(model(api, pool, authorizer));
+
+    assertEquals("invoke", connectsTo(api, "Pool"));
+    assertNull(connectsTo(pool, "Api"), "the pool is the called end, not the caller");
+  }
+
+  @Test
+  void alarmCarriesTheEdgeFromItsMetricSourceToItsAction() {
+    CFResource queue = res("Dlq", "AWS::SQS::Queue");
+    CFResource topic = res("Topic", "AWS::SNS::Topic");
+    CFResource alarm = res("Alarm", "AWS::CloudWatch::Alarm");
+    alarm.addProperty(prop("Dimensions", "Dlq"));
+    alarm.addProperty(prop("AlarmActions", "Topic"));
+
+    resolve(model(queue, topic, alarm));
+
+    assertEquals("invoke", connectsTo(queue, "Topic"));
+    assertTrue(
+        alarm.getProperties().stream().noneMatch(p -> "ConnectsTo".equals(p.getKey())),
+        "the alarm is wiring and must not become an endpoint");
+  }
+
   private static void resolve(CDKDeploymentModel m) {
     new ConnectivityGraphResolver().resolve(m);
   }

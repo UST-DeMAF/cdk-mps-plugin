@@ -69,6 +69,67 @@ class IamConnectivityResolverTest {
     assertTrue(connectsTo(lambda, "MyTable") == null, "trust policy and deny must not create a link");
   }
 
+  @Test
+  void findsAnEnvReferenceBuiltByStringConcatenation() {
+    // A URL assembled from a domain name hides the reference inside an Fn::Join.
+    CFResource distribution = resource("MyDistribution", "AWS::CloudFront::Distribution");
+    CFResource lambda = resource("MyFunction", "AWS::Lambda::Function");
+    lambda.addProperty(
+        new CFProperty(
+            "Environment",
+            "{\"Variables\":{\"PAGES_URL\":{\"Fn::Join\":[\"\",[\"https://\","
+                + "{\"Fn::GetAtt\":[\"MyDistribution\",\"DomainName\"]}]]}}}"));
+
+    CDKDeploymentModel model = model(distribution, lambda);
+    new IamConnectivityResolver().resolve(model);
+
+    assertEquals("reference", connectsTo(lambda, "MyDistribution"));
+  }
+
+  @Test
+  void aGrantOnALogGroupIsNotAnEdge() {
+    CFResource logGroup = resource("MyLogGroup", "AWS::Logs::LogGroup");
+    CFResource role = resource("MyRole", "AWS::IAM::Role");
+    CFResource stream = resource("MyDelivery", "AWS::KinesisFirehose::DeliveryStream");
+    stream.addProperty(new CFProperty("Role", "MyRole", "MyRole"));
+
+    CFResource policy = resource("MyRoleDefaultPolicy", "AWS::IAM::Policy");
+    policy.addProperty(new CFProperty("Roles", "MyRole"));
+    policy.addProperty(
+        new CFProperty(
+            "PolicyDocument",
+            "{\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"logs:PutLogEvents\","
+                + "\"Resource\":{\"Fn::GetAtt\":[\"MyLogGroup\",\"Arn\"]}}]}"));
+
+    CDKDeploymentModel model = model(logGroup, role, stream, policy);
+    new IamConnectivityResolver().resolve(model);
+
+    assertTrue(connectsTo(stream, "MyLogGroup") == null, "observability is not deployment topology");
+  }
+
+  @Test
+  void metadataLookupsDoNotMakeAProducerLookLikeAReader() {
+    // grantSendMessages always adds the two Get calls, but the sender never reads a message.
+    CFResource queue = resource("MyQueue", "AWS::SQS::Queue");
+    CFResource role = resource("MyRole", "AWS::IAM::Role");
+    CFResource rule = resource("MyRule", "AWS::IoT::TopicRule");
+    rule.addProperty(new CFProperty("Role", "MyRole", "MyRole"));
+
+    CFResource policy = resource("MyRoleDefaultPolicy", "AWS::IAM::Policy");
+    policy.addProperty(new CFProperty("Roles", "MyRole"));
+    policy.addProperty(
+        new CFProperty(
+            "PolicyDocument",
+            "{\"Statement\":[{\"Effect\":\"Allow\","
+                + "\"Action\":[\"sqs:GetQueueAttributes\",\"sqs:GetQueueUrl\",\"sqs:SendMessage\"],"
+                + "\"Resource\":{\"Fn::GetAtt\":[\"MyQueue\",\"Arn\"]}}]}"));
+
+    CDKDeploymentModel model = model(queue, role, rule, policy);
+    new IamConnectivityResolver().resolve(model);
+
+    assertEquals("write", connectsTo(rule, "MyQueue"));
+  }
+
   private static String connectsTo(CFResource accessor, String target) {
     for (CFProperty property : accessor.getProperties()) {
       if ("ConnectsTo".equals(property.getKey()) && target.equals(property.getReferenceTarget())) {

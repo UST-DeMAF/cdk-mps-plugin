@@ -26,7 +26,7 @@ public class ConnectivityGraphResolver {
   private static final String ACCESS_LEVEL = "invoke";
 
   /** Property names that hold the resource an action delivers to, rather than a role to assume. */
-  private static final String[] DESTINATION_KEYS = {"destinationarn", "targetarn"};
+  private static final String[] DESTINATION_KEYS = {"destinationarn", "targetarn", "domainname"};
 
   private final ObjectMapper mapper = new ObjectMapper();
 
@@ -43,6 +43,8 @@ public class ConnectivityGraphResolver {
           "AWS::ElasticLoadBalancingV2::TargetGroup",
           "AWS::SNS::Subscription",
           "AWS::Events::Rule",
+          "AWS::ApiGatewayV2::Authorizer",
+          "AWS::CloudWatch::Alarm",
           "Custom::S3BucketNotifications");
 
   /**
@@ -72,6 +74,8 @@ public class ConnectivityGraphResolver {
               new String[] {"LoadBalancerArn", "DefaultActions"},
           "AWS::ElasticLoadBalancingV2::ListenerRule", new String[] {"ListenerArn", "Actions"},
           "AWS::SNS::Subscription", new String[] {"TopicArn", "Endpoint"},
+          "AWS::ApiGatewayV2::Authorizer", new String[] {"ApiId", "JwtConfiguration"},
+          "AWS::CloudWatch::Alarm", new String[] {"Dimensions", "AlarmActions"},
           "Custom::S3BucketNotifications",
               new String[] {"BucketName", "NotificationConfiguration"});
 
