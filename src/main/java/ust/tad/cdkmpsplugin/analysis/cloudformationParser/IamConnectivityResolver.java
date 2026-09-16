@@ -161,14 +161,10 @@ public class IamConnectivityResolver {
     }
   }
 
-  private List<String> statementTargets(JsonNode resource, Map<String, CFResource> byId) {
-    List<String> targets = new ArrayList<>();
-    if (resource == null) {
-      return targets;
-    }
-    for (JsonNode element : resource.isArray() ? resource : List.of(resource)) {
-      String target = referenceTarget(element);
-      if (target != null && byId.containsKey(target) && !isIam(byId.get(target))) {
+  private Set<String> statementTargets(JsonNode resource, Map<String, CFResource> byId) {
+    Set<String> targets = new LinkedHashSet<>();
+    for (String target : ReferenceExtractor.deepTargets(resource)) {
+      if (byId.containsKey(target) && !isIam(byId.get(target))) {
         targets.add(target);
       }
     }

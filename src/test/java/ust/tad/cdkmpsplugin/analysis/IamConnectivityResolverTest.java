@@ -130,6 +130,54 @@ class IamConnectivityResolverTest {
     assertEquals("write", connectsTo(rule, "MyQueue"));
   }
 
+  @Test
+  void findsAGrantScopedToAnObjectKeyPrefix() {
+    // grantPut(bucket, 'releases/*') names the bucket only inside an Fn::Join.
+    CFResource bucket = resource("ArtifactBucket", "AWS::S3::Bucket");
+    CFResource role = resource("SignRole", "AWS::IAM::Role");
+    CFResource project = resource("SignFirmware", "AWS::CodeBuild::Project");
+    CFProperty serviceRole = new CFProperty("ServiceRole", "{\"Fn::GetAtt\":[\"SignRole\",\"Arn\"]}", null);
+    serviceRole.setNestedTargets(new LinkedHashSet<>(Set.of("SignRole")));
+    project.addProperty(serviceRole);
+
+    CFResource policy = resource("SignRoleDefaultPolicy", "AWS::IAM::Policy");
+    policy.addProperty(new CFProperty("Roles", "SignRole"));
+    policy.addProperty(
+        new CFProperty(
+            "PolicyDocument",
+            "{\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:PutObject\"],"
+                + "\"Resource\":{\"Fn::Join\":[\"\",[{\"Fn::GetAtt\":[\"ArtifactBucket\",\"Arn\"]},"
+                + "\"/releases/*\"]]}}]}"));
+
+    CDKDeploymentModel model = model(bucket, role, project, policy);
+    new IamConnectivityResolver().resolve(model);
+
+    assertEquals("write", connectsTo(project, "ArtifactBucket"));
+  }
+
+  @Test
+  void anArnBuiltOnlyFromPseudoParametersNamesNoResource() {
+    CFResource role = resource("PublisherRole", "AWS::IAM::Role");
+    CFResource publisher = resource("Publisher", "AWS::Lambda::Function");
+    publisher.addProperty(new CFProperty("Role", "PublisherRole", "PublisherRole"));
+
+    CFResource policy = resource("PublisherRoleDefaultPolicy", "AWS::IAM::Policy");
+    policy.addProperty(new CFProperty("Roles", "PublisherRole"));
+    policy.addProperty(
+        new CFProperty(
+            "PolicyDocument",
+            "{\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"iot:Publish\","
+                + "\"Resource\":{\"Fn::Join\":[\"\",[\"arn:\",{\"Ref\":\"AWS::Partition\"},"
+                + "\":iot:eu-central-1:\",{\"Ref\":\"AWS::AccountId\"},\":topic/fw/update/*\"]]}}]}"));
+
+    CDKDeploymentModel model = model(role, publisher, policy);
+    new IamConnectivityResolver().resolve(model);
+
+    assertTrue(
+        publisher.getProperties().stream().noneMatch(p -> "ConnectsTo".equals(p.getKey())),
+        "pseudo parameters are not resources");
+  }
+
   private static String connectsTo(CFResource accessor, String target) {
     for (CFProperty property : accessor.getProperties()) {
       if ("ConnectsTo".equals(property.getKey()) && target.equals(property.getReferenceTarget())) {
