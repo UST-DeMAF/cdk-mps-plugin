@@ -113,6 +113,7 @@ public class EdmmYamlReader {
             c.setName(dto.name);
             c.setConfidence(Confidence.CONFIRMED);
             c.setProperties(convertProperties(dto.properties));
+            c.setDescription(extractDescription(dto.properties));
             ComponentType ct = ctByName.get(dto.type);
             if (ct != null) c.setType(ct);
             result.add(c);
@@ -146,6 +147,16 @@ public class EdmmYamlReader {
         return result;
     }
 
+
+    /** Surfaces a resource's own {@code Description} property as the component's description. */
+    private String extractDescription(List<EdmmYamlDto.PropertyDto> dtos) {
+        for (EdmmYamlDto.PropertyDto dto : safe(dtos)) {
+            if ("Description".equals(dto.key) && dto.value != null && !dto.value.isBlank()) {
+                return dto.value;
+            }
+        }
+        return null;
+    }
 
     private List<Property> convertProperties(List<EdmmYamlDto.PropertyDto> dtos) {
         List<Property> result = new ArrayList<>();

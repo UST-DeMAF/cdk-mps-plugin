@@ -23,6 +23,12 @@ public class TreeWalker {
   private static final Set<String> EXCLUDED_IDS =
       Set.of("CDKMetadata", "BootstrapVersion", "CheckBootstrapVersion", "Tree");
 
+  /**
+   * Construct id prefix CDK gives the handlers behind a custom resource. They carry an ordinary
+   * function fqn, so only the id tells them apart from a function someone wrote.
+   */
+  private static final String CUSTOM_RESOURCE_PREFIX = "Custom::";
+
   /** Fully qualified construct types that are pure CloudFormation control plane (no semantics). */
   private static final Set<String> EXCLUDED_FQNS =
       Set.of(
@@ -84,7 +90,7 @@ public class TreeWalker {
 
   /** Returns {@code true} if this node should not become a CDKConstruct in the output. */
   private boolean shouldExclude(String id, JsonNode node) {
-    if (EXCLUDED_IDS.contains(id)) {
+    if (EXCLUDED_IDS.contains(id) || id.startsWith(CUSTOM_RESOURCE_PREFIX)) {
       return true;
     }
     String fqn = readFqn(node);

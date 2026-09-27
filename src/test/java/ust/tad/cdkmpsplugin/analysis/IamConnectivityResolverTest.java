@@ -69,6 +69,115 @@ class IamConnectivityResolverTest {
     assertTrue(connectsTo(lambda, "MyTable") == null, "trust policy and deny must not create a link");
   }
 
+  @Test
+  void findsAnEnvReferenceBuiltByStringConcatenation() {
+    // A URL assembled from a domain name hides the reference inside an Fn::Join.
+    CFResource distribution = resource("MyDistribution", "AWS::CloudFront::Distribution");
+    CFResource lambda = resource("MyFunction", "AWS::Lambda::Function");
+    lambda.addProperty(
+        new CFProperty(
+            "Environment",
+            "{\"Variables\":{\"PAGES_URL\":{\"Fn::Join\":[\"\",[\"https://\","
+                + "{\"Fn::GetAtt\":[\"MyDistribution\",\"DomainName\"]}]]}}}"));
+
+    CDKDeploymentModel model = model(distribution, lambda);
+    new IamConnectivityResolver().resolve(model);
+
+    assertEquals("reference", connectsTo(lambda, "MyDistribution"));
+  }
+
+  @Test
+  void aGrantOnALogGroupIsNotAnEdge() {
+    CFResource logGroup = resource("MyLogGroup", "AWS::Logs::LogGroup");
+    CFResource role = resource("MyRole", "AWS::IAM::Role");
+    CFResource stream = resource("MyDelivery", "AWS::KinesisFirehose::DeliveryStream");
+    stream.addProperty(new CFProperty("Role", "MyRole", "MyRole"));
+
+    CFResource policy = resource("MyRoleDefaultPolicy", "AWS::IAM::Policy");
+    policy.addProperty(new CFProperty("Roles", "MyRole"));
+    policy.addProperty(
+        new CFProperty(
+            "PolicyDocument",
+            "{\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"logs:PutLogEvents\","
+                + "\"Resource\":{\"Fn::GetAtt\":[\"MyLogGroup\",\"Arn\"]}}]}"));
+
+    CDKDeploymentModel model = model(logGroup, role, stream, policy);
+    new IamConnectivityResolver().resolve(model);
+
+    assertTrue(connectsTo(stream, "MyLogGroup") == null, "observability is not deployment topology");
+  }
+
+  @Test
+  void metadataLookupsDoNotMakeAProducerLookLikeAReader() {
+    // grantSendMessages always adds the two Get calls, but the sender never reads a message.
+    CFResource queue = resource("MyQueue", "AWS::SQS::Queue");
+    CFResource role = resource("MyRole", "AWS::IAM::Role");
+    CFResource rule = resource("MyRule", "AWS::IoT::TopicRule");
+    rule.addProperty(new CFProperty("Role", "MyRole", "MyRole"));
+
+    CFResource policy = resource("MyRoleDefaultPolicy", "AWS::IAM::Policy");
+    policy.addProperty(new CFProperty("Roles", "MyRole"));
+    policy.addProperty(
+        new CFProperty(
+            "PolicyDocument",
+            "{\"Statement\":[{\"Effect\":\"Allow\","
+                + "\"Action\":[\"sqs:GetQueueAttributes\",\"sqs:GetQueueUrl\",\"sqs:SendMessage\"],"
+                + "\"Resource\":{\"Fn::GetAtt\":[\"MyQueue\",\"Arn\"]}}]}"));
+
+    CDKDeploymentModel model = model(queue, role, rule, policy);
+    new IamConnectivityResolver().resolve(model);
+
+    assertEquals("write", connectsTo(rule, "MyQueue"));
+  }
+
+  @Test
+  void findsAGrantScopedToAnObjectKeyPrefix() {
+    // grantPut(bucket, 'releases/*') names the bucket only inside an Fn::Join.
+    CFResource bucket = resource("ArtifactBucket", "AWS::S3::Bucket");
+    CFResource role = resource("SignRole", "AWS::IAM::Role");
+    CFResource project = resource("SignFirmware", "AWS::CodeBuild::Project");
+    CFProperty serviceRole = new CFProperty("ServiceRole", "{\"Fn::GetAtt\":[\"SignRole\",\"Arn\"]}", null);
+    serviceRole.setNestedTargets(new LinkedHashSet<>(Set.of("SignRole")));
+    project.addProperty(serviceRole);
+
+    CFResource policy = resource("SignRoleDefaultPolicy", "AWS::IAM::Policy");
+    policy.addProperty(new CFProperty("Roles", "SignRole"));
+    policy.addProperty(
+        new CFProperty(
+            "PolicyDocument",
+            "{\"Statement\":[{\"Effect\":\"Allow\",\"Action\":[\"s3:PutObject\"],"
+                + "\"Resource\":{\"Fn::Join\":[\"\",[{\"Fn::GetAtt\":[\"ArtifactBucket\",\"Arn\"]},"
+                + "\"/releases/*\"]]}}]}"));
+
+    CDKDeploymentModel model = model(bucket, role, project, policy);
+    new IamConnectivityResolver().resolve(model);
+
+    assertEquals("write", connectsTo(project, "ArtifactBucket"));
+  }
+
+  @Test
+  void anArnBuiltOnlyFromPseudoParametersNamesNoResource() {
+    CFResource role = resource("PublisherRole", "AWS::IAM::Role");
+    CFResource publisher = resource("Publisher", "AWS::Lambda::Function");
+    publisher.addProperty(new CFProperty("Role", "PublisherRole", "PublisherRole"));
+
+    CFResource policy = resource("PublisherRoleDefaultPolicy", "AWS::IAM::Policy");
+    policy.addProperty(new CFProperty("Roles", "PublisherRole"));
+    policy.addProperty(
+        new CFProperty(
+            "PolicyDocument",
+            "{\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"iot:Publish\","
+                + "\"Resource\":{\"Fn::Join\":[\"\",[\"arn:\",{\"Ref\":\"AWS::Partition\"},"
+                + "\":iot:eu-central-1:\",{\"Ref\":\"AWS::AccountId\"},\":topic/fw/update/*\"]]}}]}"));
+
+    CDKDeploymentModel model = model(role, publisher, policy);
+    new IamConnectivityResolver().resolve(model);
+
+    assertTrue(
+        publisher.getProperties().stream().noneMatch(p -> "ConnectsTo".equals(p.getKey())),
+        "pseudo parameters are not resources");
+  }
+
   private static String connectsTo(CFResource accessor, String target) {
     for (CFProperty property : accessor.getProperties()) {
       if ("ConnectsTo".equals(property.getKey()) && target.equals(property.getReferenceTarget())) {

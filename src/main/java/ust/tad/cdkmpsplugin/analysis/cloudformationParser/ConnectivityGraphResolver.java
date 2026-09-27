@@ -1,5 +1,8 @@
 package ust.tad.cdkmpsplugin.analysis.cloudformationParser;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -22,6 +25,11 @@ public class ConnectivityGraphResolver {
 
   private static final String ACCESS_LEVEL = "invoke";
 
+  /** Property names that hold the resource an action delivers to, rather than a role to assume. */
+  private static final String[] DESTINATION_KEYS = {"destinationarn", "targetarn", "domainname"};
+
+  private final ObjectMapper mapper = new ObjectMapper();
+
   /** Wiring resources an edge may be routed through. Anything unlisted is treated as a component. */
   private static final Set<String> ROUTABLE =
       Set.of(
@@ -35,6 +43,8 @@ public class ConnectivityGraphResolver {
           "AWS::ElasticLoadBalancingV2::TargetGroup",
           "AWS::SNS::Subscription",
           "AWS::Events::Rule",
+          "AWS::ApiGatewayV2::Authorizer",
+          "AWS::CloudWatch::Alarm",
           "Custom::S3BucketNotifications");
 
   /**
@@ -64,6 +74,8 @@ public class ConnectivityGraphResolver {
               new String[] {"LoadBalancerArn", "DefaultActions"},
           "AWS::ElasticLoadBalancingV2::ListenerRule", new String[] {"ListenerArn", "Actions"},
           "AWS::SNS::Subscription", new String[] {"TopicArn", "Endpoint"},
+          "AWS::ApiGatewayV2::Authorizer", new String[] {"ApiId", "JwtConfiguration"},
+          "AWS::CloudWatch::Alarm", new String[] {"Dimensions", "AlarmActions"},
           "Custom::S3BucketNotifications",
               new String[] {"BucketName", "NotificationConfiguration"});
 
@@ -82,6 +94,8 @@ public class ConnectivityGraphResolver {
     }
     Map<String, Set<String>> neighbours = buildNeighbours(resources, byId);
 
+    linkDestinations(resources, byId);
+
     for (CFResource connector : resources) {
       if (!ROUTABLE.contains(connector.getType())) {
         continue;
@@ -93,6 +107,67 @@ public class ConnectivityGraphResolver {
         }
       }
     }
+  }
+
+  /**
+   * Some actions name the resource they deliver to instead of a role to assume, so no grant exists
+   * to follow. An IoT rule writing to a Kafka cluster names it in a destination field. The reference
+   * sits deep inside the action, so the raw value is walked and only destination fields are read.
+   */
+  private void linkDestinations(List<CFResource> resources, Map<String, CFResource> byId) {
+    Map<CFResource, Set<String>> found = new LinkedHashMap<>();
+    for (CFResource source : resources) {
+      if (BLOCKED.contains(source.getType())) {
+        continue;
+      }
+      for (CFProperty property : List.copyOf(source.getProperties())) {
+        String value = property.getValue();
+        if (value == null || !(value.startsWith("{") || value.startsWith("["))) {
+          continue;
+        }
+        JsonNode parsed;
+        try {
+          parsed = mapper.readTree(value);
+        } catch (IOException ignored) {
+          continue;
+        }
+        for (String target : destinationTargets(parsed)) {
+          CFResource candidate = byId.get(target);
+          if (candidate == null
+              || ROUTABLE.contains(candidate.getType())
+              || BLOCKED.contains(candidate.getType())) {
+            continue;
+          }
+          found.computeIfAbsent(source, r -> new LinkedHashSet<>()).add(target);
+        }
+      }
+    }
+    found.forEach((source, targets) -> targets.forEach(target -> link(source, target)));
+  }
+
+  /** Logical ids referenced by a destination field anywhere inside a value. */
+  private Set<String> destinationTargets(JsonNode node) {
+    Set<String> targets = new LinkedHashSet<>();
+    collectDestinations(node, targets);
+    return targets;
+  }
+
+  private void collectDestinations(JsonNode node, Set<String> targets) {
+    if (node.isArray()) {
+      node.forEach(child -> collectDestinations(child, targets));
+      return;
+    }
+    if (!node.isObject()) {
+      return;
+    }
+    node.fields()
+        .forEachRemaining(
+            entry -> {
+              if (matches(entry.getKey().toLowerCase(), DESTINATION_KEYS)) {
+                targets.addAll(ReferenceExtractor.deepTargets(entry.getValue()));
+              }
+              collectDestinations(entry.getValue(), targets);
+            });
   }
 
   private Map<String, Set<String>> buildNeighbours(

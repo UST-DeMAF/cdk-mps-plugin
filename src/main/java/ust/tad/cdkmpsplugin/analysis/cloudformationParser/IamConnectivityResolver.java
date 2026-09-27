@@ -23,6 +23,15 @@ public class IamConnectivityResolver {
 
   static final String CONNECTS_TO_KEY = "ConnectsTo";
 
+  /** Services granted on a wildcard resource that carry no architectural meaning. */
+  private static final Set<String> BOILERPLATE_SERVICES = Set.of("logs", "xray", "sts");
+
+  /** Observability resources. A grant on one says nothing about the deployment topology. */
+  private static final Set<String> OBSERVABILITY_TYPES =
+      Set.of("AWS::Logs::LogGroup", "AWS::Logs::LogStream");
+
+  private static final String MANAGED_SERVICE_SUFFIX = "::ManagedService";
+
   private static final String READ = "read";
   private static final String WRITE = "write";
   private static final String READ_WRITE = "readwrite";
@@ -41,6 +50,7 @@ public class IamConnectivityResolver {
     }
 
     Map<String, Map<String, Access>> accessByRole = collectRoleGrants(resources, byId);
+    Map<String, CFResource> managedServices = new LinkedHashMap<>();
 
     for (CFResource accessor : resources) {
       Map<String, Access> targets = new LinkedHashMap<>();
@@ -58,12 +68,45 @@ public class IamConnectivityResolver {
 
       for (Map.Entry<String, Access> entry : targets.entrySet()) {
         String target = entry.getKey();
-        if (target.equals(accessor.getLogicalId()) || !byId.containsKey(target)) {
+        if (target.endsWith(MANAGED_SERVICE_SUFFIX)) {
+          target = managedService(target, managedServices).getLogicalId();
+        } else if (target.equals(accessor.getLogicalId())
+            || !byId.containsKey(target)
+            || OBSERVABILITY_TYPES.contains(byId.get(target).getType())) {
           continue;
         }
         accessor.addProperty(new CFProperty(CONNECTS_TO_KEY, entry.getValue().level(), target));
       }
     }
+
+    if (!managedServices.isEmpty()) {
+      model.addConstruct(
+          new CDKConstruct(
+              "ManagedServices",
+              "",
+              model.getStacks().stream().findFirst().orElse(""),
+              "ManagedServices",
+              new LinkedHashSet<>(managedServices.values())));
+    }
+  }
+
+  /**
+   * A service reached through a wildcard grant has no CloudFormation resource of its own, so one is
+   * synthesised to stand for it. The type carries the service name so the mapping rules can give it
+   * a component type in the usual way.
+   */
+  private CFResource managedService(String target, Map<String, CFResource> managedServices) {
+    String service = target.substring(0, target.length() - MANAGED_SERVICE_SUFFIX.length());
+    return managedServices.computeIfAbsent(
+        service,
+        s ->
+            new CFResource(
+                s,
+                "AWS::"
+                    + Character.toUpperCase(s.charAt(0))
+                    + s.substring(1)
+                    + MANAGED_SERVICE_SUFFIX,
+                new LinkedHashSet<>()));
   }
 
   private Map<String, Map<String, Access>> collectRoleGrants(
@@ -106,24 +149,57 @@ public class IamConnectivityResolver {
         continue;
       }
       Access access = accessOf(statement.get("Action"));
+      if (isWildcard(statement.get("Resource"))) {
+        for (String service : servicesOf(statement.get("Action"))) {
+          grants.computeIfAbsent(service + MANAGED_SERVICE_SUFFIX, t -> new Access()).merge(access);
+        }
+        continue;
+      }
       for (String target : statementTargets(statement.get("Resource"), byId)) {
         grants.computeIfAbsent(target, t -> new Access()).merge(access);
       }
     }
   }
 
-  private List<String> statementTargets(JsonNode resource, Map<String, CFResource> byId) {
-    List<String> targets = new ArrayList<>();
-    if (resource == null) {
-      return targets;
-    }
-    for (JsonNode element : resource.isArray() ? resource : List.of(resource)) {
-      String target = referenceTarget(element);
-      if (target != null && byId.containsKey(target) && !isIam(byId.get(target))) {
+  private Set<String> statementTargets(JsonNode resource, Map<String, CFResource> byId) {
+    Set<String> targets = new LinkedHashSet<>();
+    for (String target : ReferenceExtractor.deepTargets(resource)) {
+      if (byId.containsKey(target) && !isIam(byId.get(target))) {
         targets.add(target);
       }
     }
     return targets;
+  }
+
+  private static boolean isWildcard(JsonNode resource) {
+    if (resource == null) {
+      return false;
+    }
+    for (JsonNode element : resource.isArray() ? resource : List.of(resource)) {
+      if (element.isTextual() && "*".equals(element.asText())) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Service prefixes named by a statement's actions, such as {@code rekognition}. */
+  private Set<String> servicesOf(JsonNode action) {
+    Set<String> services = new LinkedHashSet<>();
+    if (action == null) {
+      return services;
+    }
+    for (JsonNode entry : action.isArray() ? action : List.of(action)) {
+      String text = entry.asText();
+      int colon = text.indexOf(':');
+      if (colon > 0) {
+        String service = text.substring(0, colon).toLowerCase();
+        if (!BOILERPLATE_SERVICES.contains(service)) {
+          services.add(service);
+        }
+      }
+    }
+    return services;
   }
 
   private Access accessOf(JsonNode action) {
@@ -136,6 +212,8 @@ public class IamConnectivityResolver {
       if (verb.isEmpty() || verb.equals("*")) {
         access.hasRead = true;
         access.hasWrite = true;
+      } else if (isMetadataVerb(verb)) {
+        continue;
       } else if (isWriteVerb(verb)) {
         access.hasWrite = true;
       } else {
@@ -180,8 +258,29 @@ public class IamConnectivityResolver {
         roles.addAll(referencedIds(profile, "Roles", byId));
       }
     }
+    roles.addAll(nestedRoles(accessor, byId));
     roles.removeIf(id -> byId.get(id) == null || !isIam(byId.get(id)));
     return new ArrayList<>(roles);
+  }
+
+  /**
+   * Roles named somewhere inside a property rather than at the top of one. An IoT topic rule keeps
+   * the role it assumes inside its action list, so the plain lookups above never reach it.
+   */
+  private Set<String> nestedRoles(CFResource accessor, Map<String, CFResource> byId) {
+    Set<String> roles = new LinkedHashSet<>();
+    if (isIam(accessor)) {
+      return roles;
+    }
+    for (CFProperty property : accessor.getProperties()) {
+      for (String target : property.getNestedTargets()) {
+        CFResource candidate = byId.get(target);
+        if (candidate != null && "AWS::IAM::Role".equals(candidate.getType())) {
+          roles.add(target);
+        }
+      }
+    }
+    return roles;
   }
 
   private void collectReferences(JsonNode node, Map<String, CFResource> byId, List<String> targets) {
@@ -192,9 +291,10 @@ public class IamConnectivityResolver {
   }
 
   private void addReference(JsonNode node, Map<String, CFResource> byId, List<String> targets) {
-    String target = referenceTarget(node);
-    if (target != null && byId.containsKey(target) && !isIam(byId.get(target))) {
-      targets.add(target);
+    for (String target : ReferenceExtractor.deepTargets(node)) {
+      if (byId.containsKey(target) && !isIam(byId.get(target))) {
+        targets.add(target);
+      }
     }
   }
 
@@ -277,6 +377,20 @@ public class IamConnectivityResolver {
     }
     String verb = action.contains(":") ? action.substring(action.indexOf(':') + 1) : action;
     return verb.trim().toLowerCase();
+  }
+
+  /**
+   * Calls that read configuration rather than data. CDK attaches them to write-only grants, so
+   * counting them as reads would report a producer as reading what it only writes to.
+   */
+  private static boolean isMetadataVerb(String verb) {
+    for (String prefix : new String[] {"describe", "getqueueattributes", "getqueueurl",
+        "getbucketlocation", "getbucketacl", "gettopicattributes"}) {
+      if (verb.startsWith(prefix)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private static boolean isWriteVerb(String verb) {
