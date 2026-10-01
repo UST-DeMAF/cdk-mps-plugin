@@ -101,12 +101,20 @@ public class ConnectivityGraphResolver {
         continue;
       }
       Ends ends = endsOf(connector);
+      String accessLevel = connectorAccessLevel(connector);
       for (String source : expand(ends.sources, neighbours, byId, connector.getLogicalId())) {
         for (String target : expand(ends.targets, neighbours, byId, connector.getLogicalId())) {
-          link(byId.get(source), target);
+          link(byId.get(source), target, accessLevel);
         }
       }
     }
+  }
+
+  /** Connector types whose edge validates against the called end rather than triggering it. */
+  private static final Set<String> REFERENCE_CONNECTORS = Set.of("AWS::ApiGatewayV2::Authorizer");
+
+  private String connectorAccessLevel(CFResource connector) {
+    return REFERENCE_CONNECTORS.contains(connector.getType()) ? "reference" : ACCESS_LEVEL;
   }
 
   /**
@@ -142,7 +150,18 @@ public class ConnectivityGraphResolver {
         }
       }
     }
-    found.forEach((source, targets) -> targets.forEach(target -> link(source, target)));
+    found.forEach(
+        (source, targets) ->
+            targets.forEach(target -> link(source, target, destinationAccessLevel(source))));
+  }
+
+  /**
+   * {@link #linkDestinations} was built for a resource writing to a destination it names, an IoT
+   * rule delivering to a Kafka cluster. A CloudFront distribution's origin is the one destination
+   * field with the opposite direction, content is read from it, not written to it.
+   */
+  private String destinationAccessLevel(CFResource source) {
+    return "AWS::CloudFront::Distribution".equals(source.getType()) ? "read" : ACCESS_LEVEL;
   }
 
   /** Logical ids referenced by a destination field anywhere inside a value. */
@@ -247,7 +266,7 @@ public class ConnectivityGraphResolver {
   }
 
   /** Adds the edge unless this pair already has one, so IAM-derived levels are not overwritten. */
-  private void link(CFResource source, String target) {
+  private void link(CFResource source, String target, String accessLevel) {
     if (source == null || target.equals(source.getLogicalId())) {
       return;
     }
@@ -258,7 +277,7 @@ public class ConnectivityGraphResolver {
       }
     }
     source.addProperty(
-        new CFProperty(IamConnectivityResolver.CONNECTS_TO_KEY, ACCESS_LEVEL, target));
+        new CFProperty(IamConnectivityResolver.CONNECTS_TO_KEY, accessLevel, target));
   }
 
   private static boolean matches(String key, String[] markers) {

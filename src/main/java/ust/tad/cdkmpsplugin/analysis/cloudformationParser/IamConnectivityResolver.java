@@ -17,7 +17,8 @@ import ust.tad.cdkmpsplugin.cdkmodel.CFResource;
 /**
  * Infers {@code ConnectsTo} references from IAM grants and environment-variable references, added to
  * the accessor as a {@link CFProperty} with key {@code ConnectsTo}, value = access level
- * ({@code read}/{@code write}/{@code readwrite}/{@code reference}) and referenceTarget = the used resource.
+ * ({@code read}/{@code write}/{@code readwrite}/{@code invoke}/{@code reference}) and referenceTarget
+ * = the used resource.
  */
 public class IamConnectivityResolver {
 
@@ -36,6 +37,7 @@ public class IamConnectivityResolver {
   private static final String WRITE = "write";
   private static final String READ_WRITE = "readwrite";
   private static final String REFERENCE = "reference";
+  private static final String INVOKE = "invoke";
 
   private final ObjectMapper mapper = new ObjectMapper();
 
@@ -214,6 +216,8 @@ public class IamConnectivityResolver {
         access.hasWrite = true;
       } else if (isMetadataVerb(verb)) {
         continue;
+      } else if (isInvokeVerb(verb)) {
+        access.hasInvoke = true;
       } else if (isWriteVerb(verb)) {
         access.hasWrite = true;
       } else {
@@ -400,7 +404,7 @@ public class IamConnectivityResolver {
     for (String prefix :
         new String[] {
           "put", "post", "create", "update", "delete", "write", "modify", "set", "add",
-          "remove", "attach", "detach", "publish", "send", "start", "stop", "invoke",
+          "remove", "attach", "detach", "publish", "send", "start", "stop",
           "batchwrite", "replace", "tag", "untag"
         }) {
       if (verb.startsWith(prefix)) {
@@ -410,14 +414,21 @@ public class IamConnectivityResolver {
     return false;
   }
 
+  /** Calls that trigger something to run rather than mutate the target's own stored state. */
+  private static boolean isInvokeVerb(String verb) {
+    return verb.startsWith("invoke");
+  }
+
   private static final class Access {
     private boolean hasRead;
     private boolean hasWrite;
+    private boolean hasInvoke;
     private boolean hasReference;
 
     private void merge(Access other) {
       hasRead |= other.hasRead;
       hasWrite |= other.hasWrite;
+      hasInvoke |= other.hasInvoke;
       hasReference |= other.hasReference;
     }
 
@@ -430,6 +441,9 @@ public class IamConnectivityResolver {
       }
       if (hasRead) {
         return READ;
+      }
+      if (hasInvoke) {
+        return INVOKE;
       }
       return REFERENCE;
     }
