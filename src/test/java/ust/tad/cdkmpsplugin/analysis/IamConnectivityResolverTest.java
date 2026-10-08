@@ -178,6 +178,31 @@ class IamConnectivityResolverTest {
         "pseudo parameters are not resources");
   }
 
+  @Test
+  void invokingAFunctionIsNotAWrite() {
+    // A state machine invoking a function grants only lambda:InvokeFunction, never a data action.
+    CFResource function = resource("Worker", "AWS::Lambda::Function");
+    CFResource role = resource("StateMachineRole", "AWS::IAM::Role");
+    CFResource stateMachine = resource("Rollout", "AWS::StepFunctions::StateMachine");
+    CFProperty roleArn =
+        new CFProperty("RoleArn", "{\"Fn::GetAtt\":[\"StateMachineRole\",\"Arn\"]}", null);
+    roleArn.setNestedTargets(new LinkedHashSet<>(Set.of("StateMachineRole")));
+    stateMachine.addProperty(roleArn);
+
+    CFResource policy = resource("StateMachineRoleDefaultPolicy", "AWS::IAM::Policy");
+    policy.addProperty(new CFProperty("Roles", "StateMachineRole"));
+    policy.addProperty(
+        new CFProperty(
+            "PolicyDocument",
+            "{\"Statement\":[{\"Effect\":\"Allow\",\"Action\":\"lambda:InvokeFunction\","
+                + "\"Resource\":{\"Fn::GetAtt\":[\"Worker\",\"Arn\"]}}]}"));
+
+    CDKDeploymentModel model = model(function, role, stateMachine, policy);
+    new IamConnectivityResolver().resolve(model);
+
+    assertEquals("invoke", connectsTo(stateMachine, "Worker"));
+  }
+
   private static String connectsTo(CFResource accessor, String target) {
     for (CFProperty property : accessor.getProperties()) {
       if ("ConnectsTo".equals(property.getKey()) && target.equals(property.getReferenceTarget())) {

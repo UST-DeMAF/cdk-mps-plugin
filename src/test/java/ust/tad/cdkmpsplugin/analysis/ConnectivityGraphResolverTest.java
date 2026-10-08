@@ -128,7 +128,8 @@ class ConnectivityGraphResolverTest {
   @Test
   void distributionReachesItsOriginBucket() {
     // Origin access control grants CloudFront through a bucket policy, so no role is assumed and
-    // the bucket is named only by the origin domain.
+    // the bucket is named only by the origin domain. Unlike every other destination field, an
+    // origin is read from, not written to, so the level differs from the general default.
     CFResource bucket = res("Bucket", "AWS::S3::Bucket");
     CFResource distribution = res("Dist", "AWS::CloudFront::Distribution");
     distribution.addProperty(
@@ -139,11 +140,12 @@ class ConnectivityGraphResolverTest {
             null));
 
     resolve(model(bucket, distribution));
-    assertEquals("invoke", connectsTo(distribution, "Bucket"));
+    assertEquals("read", connectsTo(distribution, "Bucket"));
   }
 
   @Test
   void apiReachesTheUserPoolThroughItsAuthorizer() {
+    // A JWT authorizer validates tokens against the pool, it does not trigger anything there.
     CFResource api = res("Api", "AWS::ApiGatewayV2::Api");
     CFResource pool = res("Pool", "AWS::Cognito::UserPool");
     CFResource authorizer = res("Auth", "AWS::ApiGatewayV2::Authorizer");
@@ -152,7 +154,7 @@ class ConnectivityGraphResolverTest {
 
     resolve(model(api, pool, authorizer));
 
-    assertEquals("invoke", connectsTo(api, "Pool"));
+    assertEquals("reference", connectsTo(api, "Pool"));
     assertNull(connectsTo(pool, "Api"), "the pool is the called end, not the caller");
   }
 
